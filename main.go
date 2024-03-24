@@ -45,7 +45,7 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	stationStats := make(map[string]stats)
+	stationStats := make(map[string]*stats)
 	stationNames := make([]string, 0)
 
 	scanner := bufio.NewScanner(f)
@@ -64,8 +64,11 @@ func run() error {
 
 		s, ok := stationStats[station]
 		if !ok {
-			s.min = temp
-			s.max = temp
+			s = &stats{
+				min: temp,
+				max: temp,
+			}
+			stationStats[station] = s
 			stationNames = append(stationNames, station)
 		}
 		if temp < s.min {
@@ -76,7 +79,6 @@ func run() error {
 		}
 		s.sum += temp
 		s.count++
-		stationStats[station] = s
 	}
 
 	slices.Sort(stationNames)
