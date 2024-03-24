@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"os"
 	"runtime/pprof"
@@ -52,14 +51,16 @@ func run() error {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		stationBytes, tempBytes, ok := bytes.Cut(line, []byte(`;`))
-		if !ok {
+		if len(line) < 3 {
 			continue
 		}
+		semicolonIndex := 3
+		for ; semicolonIndex < len(line) && line[semicolonIndex] != ';'; semicolonIndex++ {
+		}
 
-		temp := bytesToFloat(tempBytes)
+		temp := bytesToFloat(line[semicolonIndex+1:])
 
-		station := string(stationBytes)
+		station := string(line[:semicolonIndex])
 
 		s, ok := stationStats[station]
 		if !ok {
