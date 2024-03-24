@@ -119,21 +119,15 @@ func intHash(b []byte) int {
 func bytesToFloat(b []byte) int64 {
 	result := int64(0)
 	i := 0
-	isNegative := false
+	sign := int64(1)
 	if b[0] == '-' {
-		isNegative = true
+		sign = -1
 		i++
 	}
-	for ; i < len(b); i++ {
-		if b[i] == '.' {
-			continue
-		}
+	for ; i < len(b)-2; i++ {
 		result = result*10 + int64(b[i]-'0')
 	}
+	result = result*10 + int64(b[i+1]-'0')
 
-	if isNegative {
-		return -result
-	}
-
-	return result
+	return result * sign
 }
