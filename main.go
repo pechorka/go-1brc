@@ -45,7 +45,7 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	stationStats := make(map[string]*stats)
+	stationStats := make(map[int]*stats)
 	stationNames := make([]string, 0)
 
 	scanner := bufio.NewScanner(f)
@@ -61,13 +61,15 @@ func run() error {
 
 		temp := bytesToFloat(line[semicolonIndex+1:])
 
-		s, ok := stationStats[string(line[:semicolonIndex])]
+		key := intHash(line[:semicolonIndex])
+
+		s, ok := stationStats[key]
 		if !ok {
 			s = &stats{
 				min: temp,
 				max: temp,
 			}
-			stationStats[string(line[:semicolonIndex])] = s
+			stationStats[key] = s
 			stationNames = append(stationNames, string(line[:semicolonIndex]))
 		}
 		if temp < s.min {
@@ -93,7 +95,7 @@ func run() error {
 		if i > 0 {
 			fmt.Fprintf(output, ", ")
 		}
-		s := stationStats[station]
+		s := stationStats[intHash([]byte(station))]
 		mean := float64(s.sum) / float64(10) / float64(s.count)
 		_, err := fmt.Fprintf(output, "%s=%.1f/%.1f/%.1f", station, float64(s.min)/float64(10), mean, float64(s.max)/float64(10))
 		if err != nil {
@@ -103,6 +105,14 @@ func run() error {
 	fmt.Fprintf(output, "}\n")
 
 	return nil
+}
+
+func intHash(b []byte) int {
+	var h int = 0
+	for i := 0; i < len(b); i++ {
+		h = h*31 + int(b[i])
+	}
+	return h
 }
 
 func bytesToFloat(b []byte) int64 {
