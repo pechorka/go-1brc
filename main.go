@@ -51,25 +51,24 @@ func run() error {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if len(line) < 3 {
+		if len(line) < 3 { // last line is empty
 			continue
 		}
+		// each city is at least 3 characters long, so semicolon is at least at index 3
 		semicolonIndex := 3
 		for ; semicolonIndex < len(line) && line[semicolonIndex] != ';'; semicolonIndex++ {
 		}
 
 		temp := bytesToFloat(line[semicolonIndex+1:])
 
-		station := string(line[:semicolonIndex])
-
-		s, ok := stationStats[station]
+		s, ok := stationStats[string(line[:semicolonIndex])]
 		if !ok {
 			s = &stats{
 				min: temp,
 				max: temp,
 			}
-			stationStats[station] = s
-			stationNames = append(stationNames, station)
+			stationStats[string(line[:semicolonIndex])] = s
+			stationNames = append(stationNames, string(line[:semicolonIndex]))
 		}
 		if temp < s.min {
 			s.min = temp
