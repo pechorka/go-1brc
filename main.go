@@ -47,8 +47,9 @@ func run() error {
 
 	stationStats := make(map[int]*stats)
 	stationNames := make([]string, 0)
-
 	scanner := bufio.NewScanner(f)
+	const bufferSize = 1024 * 1024
+	scanner.Buffer(make([]byte, bufferSize), bufferSize)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) < 3 { // last line is empty
