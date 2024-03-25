@@ -47,7 +47,7 @@ func run() error {
 	}
 
 	stationStats := make([]*stats, 300_000)
-	stationNames := make([]string, 0)
+	stationNames := make([]string, 0, 500)
 	scanner := bufio.NewScanner(f)
 	const bufferSize = 1024 * 1024
 	scanner.Buffer(make([]byte, bufferSize), bufferSize)
