@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"runtime/pprof"
 	"slices"
@@ -45,7 +46,7 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	stationStats := make(map[int]*stats)
+	stationStats := make([]*stats, 300_000)
 	stationNames := make([]string, 0)
 	scanner := bufio.NewScanner(f)
 	const bufferSize = 1024 * 1024
@@ -62,10 +63,10 @@ func run() error {
 
 		temp := bytesToFloat(line[semicolonIndex+1:])
 
-		key := intHash(line[:semicolonIndex])
+		key := intHash(line[:semicolonIndex]) % len(stationStats)
 
-		s, ok := stationStats[key]
-		if !ok {
+		s := stationStats[key]
+		if s == nil {
 			s = &stats{
 				min: temp,
 				max: temp,
@@ -96,7 +97,7 @@ func run() error {
 		if i > 0 {
 			fmt.Fprintf(output, ", ")
 		}
-		s := stationStats[intHash([]byte(station))]
+		s := stationStats[intHash([]byte(station))%len(stationStats)]
 		mean := float64(s.sum) / float64(10) / float64(s.count)
 		_, err := fmt.Fprintf(output, "%s=%.1f/%.1f/%.1f", station, float64(s.min)/float64(10), mean, float64(s.max)/float64(10))
 		if err != nil {
@@ -109,11 +110,9 @@ func run() error {
 }
 
 func intHash(b []byte) int {
-	var h int = 0
-	for i := 0; i < len(b); i++ {
-		h = h*31 + int(b[i])
-	}
-	return h
+	h := fnv.New32a()
+	h.Write(b)
+	return int(h.Sum32())
 }
 
 func bytesToFloat(b []byte) int64 {
