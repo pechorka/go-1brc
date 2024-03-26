@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pechorka/stdlib/pkg/errs"
@@ -32,6 +33,8 @@ const (
 	prime32  = 16777619
 )
 
+const stationStatsSize = 2 << 17
+
 func run() error {
 	filePath := "measurements-1b.txt"
 	if len(os.Args) > 1 {
@@ -51,14 +54,15 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	const stationStatsSize = 2 << 17
-	stationStats := make([]*stats, stationStatsSize)
-	stationNames := make([]string, 0, 500)
+	allStationStats := make([][]*stats, 0, 30)
 
-	const bufferSize = 1024 * 1024
-	buf := make([]byte, bufferSize)
-	emptyBufStart := 0
+	wg := new(sync.WaitGroup)
+
+	const bufferSize = 100 * 1024 * 1024
+	remaining := make([]byte, 0, bufferSize)
 	for {
+		buf := make([]byte, bufferSize)
+		emptyBufStart := copy(buf, remaining)
 		n, err := f.Read(buf[emptyBufStart:])
 		if err != nil && err != io.EOF {
 			return errs.Wrap(err, "failed to read file")
@@ -74,68 +78,22 @@ func run() error {
 			break
 		}
 
-		remaining := chunk[lastNewLine+1:]
+		remaining = chunk[lastNewLine+1:]
+
+		wg.Add(1)
 		chunk = chunk[:lastNewLine+1]
-
-		for {
-			semicolonIndex := -1
-			hash := uint32(0)
-			for i := 0; i < len(chunk); i++ {
-				if chunk[i] == ';' {
-					semicolonIndex = i
-					break
-				}
-				if semicolonIndex == -1 {
-					hash = (hash ^ uint32(chunk[i])) * prime32
-				}
-			}
-			if semicolonIndex == -1 {
-				break
-			}
-
-			tempI := semicolonIndex + 1
-			sign := int16(1)
-			if chunk[tempI] == '-' {
-				sign = -1
-				tempI++
-			}
-			temp := int16(chunk[tempI] - '0')
-			tempI++
-			if chunk[tempI] != '.' {
-				temp = temp*10 + int16(chunk[tempI]-'0')
-				tempI++
-			}
-			tempI++ // skip dot
-			temp = temp*10 + int16(chunk[tempI]-'0')
-			temp *= sign
-
-			tempI += 2 // skip decimal digit and \n
-
-			key := int(hash & uint32(stationStatsSize-1))
-
-			s := stationStats[key]
-			if s == nil {
-				s = &stats{
-					min: temp,
-					max: temp,
-				}
-				stationStats[key] = s
-				stationNames = append(stationNames, string(chunk[:semicolonIndex]))
-			}
-			if temp < s.min {
-				s.min = temp
-			}
-			if temp > s.max {
-				s.max = temp
-			}
-			s.sum += int32(temp)
-			s.count++
-
-			chunk = chunk[tempI:]
-		}
-
-		emptyBufStart = copy(buf, remaining)
+		stationStats := make([]*stats, stationStatsSize)
+		allStationStats = append(allStationStats, stationStats)
+		go processChunk(wg, chunk, stationStats)
 	}
+
+	wg.Wait()
+
+	stationNames := make([]string, 0)
+	stationNamesMap.Range(func(key, value interface{}) bool {
+		stationNames = append(stationNames, key.(string))
+		return true
+	})
 
 	slices.Sort(stationNames)
 
@@ -154,9 +112,28 @@ func run() error {
 		for j := 0; j < len(station); j++ {
 			hash = (hash ^ uint32(station[j])) * prime32
 		}
-		s := stationStats[int(hash&uint32(stationStatsSize-1))]
-		mean := float64(s.sum) / float64(10) / float64(s.count)
-		_, err := fmt.Fprintf(output, "%s=%.1f/%.1f/%.1f", station, float64(s.min)/float64(10), mean, float64(s.max)/float64(10))
+		var mergedStats *stats
+		for _, stationStats := range allStationStats {
+			s := stationStats[int(hash&uint32(stationStatsSize-1))]
+			if s != nil {
+				if mergedStats == nil {
+					mergedStats = s
+					continue
+				}
+
+				if s.min < mergedStats.min {
+					mergedStats.min = s.min
+				}
+				if s.max > mergedStats.max {
+					mergedStats.max = s.max
+				}
+				mergedStats.sum += s.sum
+				mergedStats.count += s.count
+			}
+		}
+
+		mean := float64(mergedStats.sum) / float64(10) / float64(mergedStats.count)
+		_, err := fmt.Fprintf(output, "%s=%.1f/%.1f/%.1f", station, float64(mergedStats.min)/float64(10), mean, float64(mergedStats.max)/float64(10))
 		if err != nil {
 			return errs.Wrap(err, "failed to write to output file")
 		}
@@ -165,3 +142,65 @@ func run() error {
 
 	return nil
 }
+
+func processChunk(wg *sync.WaitGroup, chunk []byte, stationStats []*stats) {
+	defer wg.Done()
+	for {
+		semicolonIndex := -1
+		hash := uint32(0)
+		for i := 0; i < len(chunk); i++ {
+			if chunk[i] == ';' {
+				semicolonIndex = i
+				break
+			}
+			if semicolonIndex == -1 {
+				hash = (hash ^ uint32(chunk[i])) * prime32
+			}
+		}
+		if semicolonIndex == -1 {
+			break
+		}
+
+		tempI := semicolonIndex + 1
+		sign := int16(1)
+		if chunk[tempI] == '-' {
+			sign = -1
+			tempI++
+		}
+		temp := int16(chunk[tempI] - '0')
+		tempI++
+		if chunk[tempI] != '.' {
+			temp = temp*10 + int16(chunk[tempI]-'0')
+			tempI++
+		}
+		tempI++ // skip dot
+		temp = temp*10 + int16(chunk[tempI]-'0')
+		temp *= sign
+
+		tempI += 2 // skip decimal digit and \n
+
+		key := int(hash & uint32(stationStatsSize-1))
+
+		s := stationStats[key]
+		if s == nil {
+			s = &stats{
+				min: temp,
+				max: temp,
+			}
+			stationStats[key] = s
+			stationNamesMap.Store(string(chunk[:semicolonIndex]), struct{}{})
+		}
+		if temp < s.min {
+			s.min = temp
+		}
+		if temp > s.max {
+			s.max = temp
+		}
+		s.sum += int32(temp)
+		s.count++
+
+		chunk = chunk[tempI:]
+	}
+}
+
+var stationNamesMap *sync.Map = new(sync.Map)
