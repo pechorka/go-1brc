@@ -21,8 +21,8 @@ func main() {
 }
 
 type stats struct {
-	min   int32
-	max   int32
+	min   int16
+	max   int16
 	sum   int32
 	count int32
 }
@@ -80,7 +80,7 @@ func run() error {
 		if temp > s.max {
 			s.max = temp
 		}
-		s.sum += temp
+		s.sum += int32(temp)
 		s.count++
 	}
 
@@ -115,18 +115,18 @@ func intHash(b []byte) int {
 	return int(h.Sum32())
 }
 
-func bytesToFloat(b []byte) int32 {
-	result := int32(0)
+func bytesToFloat(b []byte) int16 {
+	result := int16(0)
 	i := 0
-	sign := int32(1)
+	sign := int16(1)
 	if b[0] == '-' {
 		sign = -1
 		i++
 	}
 	for ; i < len(b)-2; i++ {
-		result = result*10 + int32(b[i]-'0')
+		result = result*10 + int16(b[i]-'0')
 	}
-	result = result*10 + int32(b[i+1]-'0')
+	result = result*10 + int16(b[i+1]-'0')
 
 	return result * sign
 }
