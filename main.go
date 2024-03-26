@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"runtime/pprof"
 	"slices"
@@ -27,6 +26,11 @@ type stats struct {
 	count int32
 }
 
+const (
+	offset32 = 2166136261
+	prime32  = 16777619
+)
+
 func run() error {
 	filePath := "measurements-1k.txt"
 	if len(os.Args) > 1 {
@@ -46,7 +50,8 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
-	stationStats := make([]*stats, 300_000)
+	const stationStatsSize = 2 << 17
+	stationStats := make([]*stats, stationStatsSize)
 	stationNames := make([]string, 0, 500)
 	scanner := bufio.NewScanner(f)
 	const bufferSize = 1024 * 1024
@@ -57,22 +62,30 @@ func run() error {
 		if len(line) < 3 { // last line is empty
 			continue
 		}
-		// each city is at least 3 characters long, so semicolon is at least at index 3
-		semicolonIndex := 3
-		for ; semicolonIndex < len(line) && line[semicolonIndex] != ';'; semicolonIndex++ {
+
+		semicolonIndex := 0
+		hash := uint32(0)
+		for ; semicolonIndex < len(line); semicolonIndex++ {
+			if line[semicolonIndex] == ';' {
+				break
+			}
+			hash = (hash ^ uint32(line[semicolonIndex])) * prime32
 		}
 
 		temp := bytesToFloat(line[semicolonIndex+1:])
-		key := intHash(line[:semicolonIndex]) % len(stationStats)
+		key := int(hash & uint32(stationStatsSize-1))
 
 		s := stationStats[key]
 		if s == nil {
 			s = &stats{
-				min: temp,
-				max: temp,
+				min:   temp,
+				max:   temp,
+				sum:   int32(temp),
+				count: 1,
 			}
 			stationStats[key] = s
 			stationNames = append(stationNames, string(line[:semicolonIndex]))
+			continue
 		}
 		if temp < s.min {
 			s.min = temp
@@ -97,7 +110,11 @@ func run() error {
 		if i > 0 {
 			fmt.Fprintf(output, ", ")
 		}
-		s := stationStats[intHash([]byte(station))%len(stationStats)]
+		hash := uint32(0)
+		for j := 0; j < len(station); j++ {
+			hash = (hash ^ uint32(station[j])) * prime32
+		}
+		s := stationStats[int(hash&uint32(stationStatsSize-1))]
 		mean := float64(s.sum) / float64(10) / float64(s.count)
 		_, err := fmt.Fprintf(output, "%s=%.1f/%.1f/%.1f", station, float64(s.min)/float64(10), mean, float64(s.max)/float64(10))
 		if err != nil {
@@ -107,12 +124,6 @@ func run() error {
 	fmt.Fprintf(output, "}\n")
 
 	return nil
-}
-
-func intHash(b []byte) int {
-	h := fnv.New32a()
-	h.Write(b)
-	return int(h.Sum32())
 }
 
 func bytesToFloat(b []byte) int16 {
