@@ -1,8 +1,9 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"runtime/pprof"
 	"slices"
@@ -32,7 +33,7 @@ const (
 )
 
 func run() error {
-	filePath := "measurements-1k.txt"
+	filePath := "measurements-1b.txt"
 	if len(os.Args) > 1 {
 		filePath = os.Args[1]
 	}
@@ -53,48 +54,87 @@ func run() error {
 	const stationStatsSize = 2 << 17
 	stationStats := make([]*stats, stationStatsSize)
 	stationNames := make([]string, 0, 500)
-	scanner := bufio.NewScanner(f)
-	const bufferSize = 1024 * 1024
-	scanner.Buffer(make([]byte, bufferSize), bufferSize)
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) < 3 { // last line is empty
-			continue
+	const bufferSize = 1024 * 1024
+	buf := make([]byte, bufferSize)
+	emptyBufStart := 0
+	for {
+		n, err := f.Read(buf[emptyBufStart:])
+		if err != nil && err != io.EOF {
+			return errs.Wrap(err, "failed to read file")
+		}
+		if n+emptyBufStart == 0 {
+			break
 		}
 
-		semicolonIndex := 0
-		hash := uint32(0)
-		for ; semicolonIndex < len(line); semicolonIndex++ {
-			if line[semicolonIndex] == ';' {
+		chunk := buf[:n+emptyBufStart]
+
+		lastNewLine := bytes.LastIndexByte(chunk, '\n')
+		if lastNewLine == -1 {
+			break
+		}
+
+		remaining := chunk[lastNewLine+1:]
+		chunk = chunk[:lastNewLine+1]
+
+		for {
+			semicolonIndex := -1
+			hash := uint32(0)
+			for i := 0; i < len(chunk); i++ {
+				if chunk[i] == ';' {
+					semicolonIndex = i
+					break
+				}
+				if semicolonIndex == -1 {
+					hash = (hash ^ uint32(chunk[i])) * prime32
+				}
+			}
+			if semicolonIndex == -1 {
 				break
 			}
-			hash = (hash ^ uint32(line[semicolonIndex])) * prime32
-		}
 
-		temp := bytesToFloat(line[semicolonIndex+1:])
-		key := int(hash & uint32(stationStatsSize-1))
-
-		s := stationStats[key]
-		if s == nil {
-			s = &stats{
-				min:   temp,
-				max:   temp,
-				sum:   int32(temp),
-				count: 1,
+			tempI := semicolonIndex + 1
+			sign := int16(1)
+			if chunk[tempI] == '-' {
+				sign = -1
+				tempI++
 			}
-			stationStats[key] = s
-			stationNames = append(stationNames, string(line[:semicolonIndex]))
-			continue
+			temp := int16(chunk[tempI] - '0')
+			tempI++
+			if chunk[tempI] != '.' {
+				temp = temp*10 + int16(chunk[tempI]-'0')
+				tempI++
+			}
+			tempI++ // skip dot
+			temp = temp*10 + int16(chunk[tempI]-'0')
+			temp *= sign
+
+			tempI += 2 // skip decimal digit and \n
+
+			key := int(hash & uint32(stationStatsSize-1))
+
+			s := stationStats[key]
+			if s == nil {
+				s = &stats{
+					min: temp,
+					max: temp,
+				}
+				stationStats[key] = s
+				stationNames = append(stationNames, string(chunk[:semicolonIndex]))
+			}
+			if temp < s.min {
+				s.min = temp
+			}
+			if temp > s.max {
+				s.max = temp
+			}
+			s.sum += int32(temp)
+			s.count++
+
+			chunk = chunk[tempI:]
 		}
-		if temp < s.min {
-			s.min = temp
-		}
-		if temp > s.max {
-			s.max = temp
-		}
-		s.sum += int32(temp)
-		s.count++
+
+		emptyBufStart = copy(buf, remaining)
 	}
 
 	slices.Sort(stationNames)
@@ -124,28 +164,4 @@ func run() error {
 	fmt.Fprintf(output, "}\n")
 
 	return nil
-}
-
-func bytesToFloat(b []byte) int16 {
-	// b is either
-	// 1) -n.n
-	// 2) -nn.n
-	// 3) n.n
-	// 4) nn.n
-
-	if b[0] == '-' {
-		// -n.n
-		if len(b) == 4 {
-			return -(int16((b[1]-'0')*10 + (b[3] - '0')))
-		}
-		// -nn.n
-		return -(int16(b[1]-'0')*100 + int16((b[2]-'0')*10+(b[4]-'0')))
-	} else {
-		// n.n
-		if len(b) == 3 {
-			return int16(b[0]-'0')*10 + int16(b[2]-'0')
-		}
-		// nn.n
-		return int16(b[0]-'0')*100 + int16((b[1]-'0')*10+(b[3]-'0'))
-	}
 }
