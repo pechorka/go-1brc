@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io"
+	"log"
 	"os"
 	"runtime/pprof"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/pechorka/stdlib/pkg/errs"
@@ -40,11 +40,6 @@ func run() error {
 	if len(os.Args) > 1 {
 		filePath = os.Args[1]
 	}
-	f, err := os.Open(filePath)
-	if err != nil {
-		return errs.Wrap(err, "failed to open file")
-	}
-
 	if len(os.Args) > 2 {
 		f, err := os.Create("cpu.prof")
 		if err != nil {
@@ -54,37 +49,54 @@ func run() error {
 		defer pprof.StopCPUProfile()
 	}
 
+	f, err := os.Open(filePath)
+	if err != nil {
+		return errs.Wrap(err, "failed to open file")
+	}
+
+	fi, err := f.Stat()
+	if err != nil {
+		return errs.Wrap(err, "failed to get file info")
+	}
+
+	size := fi.Size()
+	if size <= 0 || size != int64(int(size)) {
+		return errs.Newf("invalid file size: %d", size)
+	}
+
+	data, err := syscall.Mmap(int(f.Fd()), 0, int(size), syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		log.Fatalf("Mmap: %v", err)
+	}
+
 	allStationStats := make([][]*stats, 0, 30)
 
 	wg := new(sync.WaitGroup)
 
-	const bufferSize = 100 * 1024 * 1024
-	remaining := make([]byte, 0, bufferSize)
-	for {
-		buf := make([]byte, bufferSize)
-		emptyBufStart := copy(buf, remaining)
-		n, err := f.Read(buf[emptyBufStart:])
-		if err != nil && err != io.EOF {
-			return errs.Wrap(err, "failed to read file")
+	const chunkSize = 100 * 1024 * 1024
+	chunkStart := 0
+	for chunkStart < len(data) {
+		chunkEnd := chunkStart + chunkSize
+		if chunkEnd >= len(data) {
+			chunkEnd = len(data) - 1
+		} else {
+			for data[chunkEnd] != '\n' {
+				chunkEnd--
+			}
 		}
-		if n+emptyBufStart == 0 {
-			break
-		}
-
-		chunk := buf[:n+emptyBufStart]
-
-		lastNewLine := bytes.LastIndexByte(chunk, '\n')
-		if lastNewLine == -1 {
-			break
-		}
-
-		remaining = chunk[lastNewLine+1:]
 
 		wg.Add(1)
-		chunk = chunk[:lastNewLine+1]
+		chunk := data[chunkStart : chunkEnd+1]
 		stationStats := make([]*stats, stationStatsSize)
+
+		go func() {
+			processChunk(chunk, stationStats)
+			wg.Done()
+		}()
+
 		allStationStats = append(allStationStats, stationStats)
-		go processChunk(wg, chunk, stationStats)
+
+		chunkStart = chunkEnd + 1
 	}
 
 	wg.Wait()
@@ -143,8 +155,7 @@ func run() error {
 	return nil
 }
 
-func processChunk(wg *sync.WaitGroup, chunk []byte, stationStats []*stats) {
-	defer wg.Done()
+func processChunk(chunk []byte, stationStats []*stats) {
 	for {
 		semicolonIndex := -1
 		hash := uint32(0)
