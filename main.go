@@ -21,10 +21,10 @@ func main() {
 }
 
 type stats struct {
-	min   int64
-	max   int64
-	sum   int64
-	count int64
+	min   int32
+	max   int32
+	sum   int32
+	count int32
 }
 
 func run() error {
@@ -51,6 +51,7 @@ func run() error {
 	scanner := bufio.NewScanner(f)
 	const bufferSize = 1024 * 1024
 	scanner.Buffer(make([]byte, bufferSize), bufferSize)
+
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) < 3 { // last line is empty
@@ -62,7 +63,6 @@ func run() error {
 		}
 
 		temp := bytesToFloat(line[semicolonIndex+1:])
-
 		key := intHash(line[:semicolonIndex]) % len(stationStats)
 
 		s := stationStats[key]
@@ -115,18 +115,18 @@ func intHash(b []byte) int {
 	return int(h.Sum32())
 }
 
-func bytesToFloat(b []byte) int64 {
-	result := int64(0)
+func bytesToFloat(b []byte) int32 {
+	result := int32(0)
 	i := 0
-	sign := int64(1)
+	sign := int32(1)
 	if b[0] == '-' {
 		sign = -1
 		i++
 	}
 	for ; i < len(b)-2; i++ {
-		result = result*10 + int64(b[i]-'0')
+		result = result*10 + int32(b[i]-'0')
 	}
-	result = result*10 + int64(b[i+1]-'0')
+	result = result*10 + int32(b[i+1]-'0')
 
 	return result * sign
 }
