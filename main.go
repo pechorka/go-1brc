@@ -127,17 +127,25 @@ func run() error {
 }
 
 func bytesToFloat(b []byte) int16 {
-	result := int16(0)
-	i := 0
-	sign := int16(1)
-	if b[0] == '-' {
-		sign = -1
-		i++
-	}
-	for ; i < len(b)-2; i++ {
-		result = result*10 + int16(b[i]-'0')
-	}
-	result = result*10 + int16(b[i+1]-'0')
+	// b is either
+	// 1) -n.n
+	// 2) -nn.n
+	// 3) n.n
+	// 4) nn.n
 
-	return result * sign
+	if b[0] == '-' {
+		// -n.n
+		if len(b) == 4 {
+			return -(int16((b[1]-'0')*10 + (b[3] - '0')))
+		}
+		// -nn.n
+		return -(int16(b[1]-'0')*100 + int16((b[2]-'0')*10+(b[4]-'0')))
+	} else {
+		// n.n
+		if len(b) == 3 {
+			return int16(b[0]-'0')*10 + int16(b[2]-'0')
+		}
+		// nn.n
+		return int16(b[0]-'0')*100 + int16((b[1]-'0')*10+(b[3]-'0'))
+	}
 }
